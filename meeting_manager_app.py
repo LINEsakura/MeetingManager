@@ -27,19 +27,50 @@ if getattr(sys, 'frozen', False):  # 如果是打包后的 app
 
 # DB_PATH = "meetings.db"
 
-def external_resource(relative_path):
-    """
-    获取 .app 外部资源的路径
-    """
-    if getattr(sys, 'frozen', False):  # 如果是打包后的应用
-        # __file__ 指向的是 Contents/MacOS/MeetingManager
-        base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(sys.executable))))
-        # 这里的 base_path = dist/
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_path, relative_path)
 
-DB_PATH = external_resource("meetings.db")
+# def external_resource(relative_path):
+#     """
+#     获取 .app 外部资源的路径
+#     """
+#     if getattr(sys, 'frozen', False):  # 如果是打包后的应用
+#         # __file__ 指向的是 Contents/MacOS/MeetingManager
+#         base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(sys.executable))))
+#         # 这里的 base_path = dist/
+#     else:
+#         base_path = os.path.dirname(os.path.abspath(__file__))
+#     return os.path.join(base_path, relative_path)
+
+# DB_PATH = external_resource("meetings.db")
+# ----------------------------- 路径配置修改 -----------------------------
+def get_db_path():
+    """
+    将数据库存放在用户的【桌面/MeetingManagerData】文件夹下
+    """
+    # 1. 获取用户主目录
+    home = os.path.expanduser("~")
+    
+    # 2. 拼接桌面路径
+    # 注意：Windows 和 Mac 的桌面路径默认都是 "Desktop"
+    desktop_path = os.path.join(home, "Desktop")
+    
+    # 3. 指定数据文件夹名称
+    data_dir = os.path.join(desktop_path, "MeetingManagerData")
+    
+    # 4. 如果桌面上没有这个文件夹，自动创建一个
+    if not os.path.exists(data_dir):
+        try:
+            os.makedirs(data_dir)
+        except Exception as e:
+            # 如果创建失败（极少情况），回退到临时目录防止报错
+            print(f"无法创建文件夹: {e}")
+            return "meetings.db"
+            
+    # 5. 返回完整的数据库路径
+    return os.path.join(data_dir, "meetings.db")
+
+# 应用新的路径逻辑
+DB_PATH = get_db_path()
+# ----------------------------------------------------------------------
 
 # ----------------------------- 数据库层 -----------------------------
 class DBManager:
