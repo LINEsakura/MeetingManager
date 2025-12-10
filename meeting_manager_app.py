@@ -18,10 +18,7 @@ from docx.shared import Cm
 import os, sys
 
 if getattr(sys, 'frozen', False):  # 如果是打包后的 app
-    bundle_dir = sys._MEIPASS if hasattr(sys, "_MEIPASS") else os.path.abspath(os.path.dirname(sys.executable))
-    plugin_path = os.path.join(os.path.dirname(sys.executable), "../Plugins")
-    os.environ["QT_PLUGIN_PATH"] = plugin_path
-
+    bundle_dir = sys._MEIPASS
 
 
 
@@ -287,33 +284,46 @@ def normalize_datetime(date_str: str) -> Optional[str]:
 
 # def normalize_date_prefix(date_in: str) -> Optional[str]:
 #     s = date_in.strip()
+
+#     # 中文日期开头
 #     m = DATE_RE_CN_FULL.match(s)
 #     if m:
 #         try:
-#             return datetime(int(m.group("y")), int(m.group("m")), int(m.group("d"))).strftime("%Y-%m-%d")
+#             return datetime(
+#                 int(m.group("y")), int(m.group("m")), int(m.group("d"))
+#             ).strftime("%Y-%m-%d")
 #         except ValueError:
 #             return None
+
+#     # 标准日期开头
+#     m = DATE_RE_STD_FULL.match(s)
+#     if m:
+#         try:
+#             return datetime(
+#                 int(m.group("y")), int(m.group("m")), int(m.group("d"))
+#             ).strftime("%Y-%m-%d")
+#         except ValueError:
+#             return None
+
 #     return None
 def normalize_date_prefix(date_in: str) -> Optional[str]:
     s = date_in.strip()
 
-    # 中文日期开头
+    # 1. 如果输入的是中文日期 (例如：2022年1月4日)
     m = DATE_RE_CN_FULL.match(s)
     if m:
         try:
-            return datetime(
-                int(m.group("y")), int(m.group("m")), int(m.group("d"))
-            ).strftime("%Y-%m-%d")
+            y, mm, d = int(m.group("y")), int(m.group("m")), int(m.group("d"))
+            return f"{y}年{mm}月{d}日"
         except ValueError:
             return None
 
-    # 标准日期开头
+    # 2. 如果输入的是标准日期 (例如：2022-01-04)
     m = DATE_RE_STD_FULL.match(s)
     if m:
         try:
-            return datetime(
-                int(m.group("y")), int(m.group("m")), int(m.group("d"))
-            ).strftime("%Y-%m-%d")
+            y, mm, d = int(m.group("y")), int(m.group("m")), int(m.group("d"))
+            return f"{y}年{mm}月{d}日" 
         except ValueError:
             return None
 
@@ -852,7 +862,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if errors:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             err_csv = Path.cwd() / f"import_errors_{ts}.csv"
-            with open(err_csv, "w", newline="", encoding="utf-8") as fp:
+            with open(err_csv, "w", newline="", encoding="utf-8-sig") as fp:
                 w = csv.writer(fp)
                 w.writerow(["文件名", "错误原因", "原始文本"])
                 w.writerows(errors)
