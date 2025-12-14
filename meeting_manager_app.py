@@ -211,6 +211,11 @@ DATE_RE_STD_FULL = re.compile(r"^\s*(?P<y>\d{4})-(?P<m>\d{1,2})-(?P<d>\d{1,2})\s
 DATE_RE_CN_PREFIX = re.compile(r"^\s*(?P<y>\d{4})年(?P<m>\d{1,2})月(?P<d>\d{1,2})日")
 DATE_RE_STD_PREFIX = re.compile(r"^\s*(?P<y>\d{4})-(?P<m>\d{1,2})-(?P<d>\d{1,2})")
 
+# 匹配：2022年1月 或 2022-01 或 2022.1
+DATE_RE_YM = re.compile(r"^\s*(?P<y>\d{4})[年\.-](?P<m>\d{1,2})(月)?\s*$")
+# 匹配：2022 或 2022年
+DATE_RE_Y = re.compile(r"^\s*(?P<y>\d{4})(年)?\s*$")
+
 
 def pad2(n: int) -> str:
     return f"{n:02d}"
@@ -281,51 +286,74 @@ def normalize_datetime(date_str: str) -> Optional[str]:
 
 #     return None
 
-
 # def normalize_date_prefix(date_in: str) -> Optional[str]:
 #     s = date_in.strip()
 
-#     # 中文日期开头
+#     # 1. 如果输入的是中文日期 (例如：2022年1月4日)
 #     m = DATE_RE_CN_FULL.match(s)
 #     if m:
 #         try:
-#             return datetime(
-#                 int(m.group("y")), int(m.group("m")), int(m.group("d"))
-#             ).strftime("%Y-%m-%d")
+#             y, mm, d = int(m.group("y")), int(m.group("m")), int(m.group("d"))
+#             return f"{y}年{mm}月{d}日"
 #         except ValueError:
 #             return None
 
-#     # 标准日期开头
+#     # 2. 如果输入的是标准日期 (例如：2022-01-04)
 #     m = DATE_RE_STD_FULL.match(s)
 #     if m:
 #         try:
-#             return datetime(
-#                 int(m.group("y")), int(m.group("m")), int(m.group("d"))
-#             ).strftime("%Y-%m-%d")
+#             y, mm, d = int(m.group("y")), int(m.group("m")), int(m.group("d"))
+#             return f"{y}年{mm}月{d}日" 
 #         except ValueError:
 #             return None
 
 #     return None
 def normalize_date_prefix(date_in: str) -> Optional[str]:
+    """
+    智能解析搜索关键词，支持：
+    1. 年月日 (2022-01-04) -> 2022年1月4日
+    2. 年月   (2022-01)    -> 2022年1月
+    3. 年     (2022)       -> 2022年
+    """
     s = date_in.strip()
 
-    # 1. 如果输入的是中文日期 (例如：2022年1月4日)
+    # 1. 尝试匹配【完整日期】 (优先级最高)
+    # 中文格式：2022年1月4日
     m = DATE_RE_CN_FULL.match(s)
     if m:
         try:
             y, mm, d = int(m.group("y")), int(m.group("m")), int(m.group("d"))
             return f"{y}年{mm}月{d}日"
         except ValueError:
-            return None
-
-    # 2. 如果输入的是标准日期 (例如：2022-01-04)
+            pass
+    # 标准格式：2022-01-04
     m = DATE_RE_STD_FULL.match(s)
     if m:
         try:
             y, mm, d = int(m.group("y")), int(m.group("m")), int(m.group("d"))
             return f"{y}年{mm}月{d}日" 
         except ValueError:
-            return None
+            pass
+
+    # 2. 尝试匹配【年月】 (例如：2022-05 或 2022年5月)
+    m = DATE_RE_YM.match(s)
+    if m:
+        try:
+            y, mm = int(m.group("y")), int(m.group("m"))
+            # 返回 "2022年5月"，这样 SQL 就会查 "2022年5月%"，能搜出该月所有天
+            return f"{y}年{mm}月"
+        except ValueError:
+            pass
+
+    # 3. 尝试匹配【仅年份】 (例如：2022 或 2022年)
+    m = DATE_RE_Y.match(s)
+    if m:
+        try:
+            y = int(m.group("y"))
+            # 返回 "2022年"，这样 SQL 就会查 "2022年%"，能搜出该年所有数据
+            return f"{y}年"
+        except ValueError:
+            pass
 
     return None
 
@@ -373,8 +401,8 @@ def parse_docx_to_records(path: Path) -> List[Tuple[Optional[Dict], Optional[str
                 if content_started:
                     content_lines.append(ln)
 
-        if not date_str or not location or not attendees:
-            all_meetings.append((None, "缺少必要字段（会议时间/地点/人员）", raw_text))
+        if not date_str:
+            all_meetings.append((None, "缺少必要字段（会议时间）", raw_text))
             continue
 
         date_norm = normalize_datetime(date_str)
@@ -841,7 +869,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             return
 
-        errors, ok_count, dup_count = [], 0, 0
+        # errors, ok_count, dup_count = [], 0, 0
+        errors = []
+        duplicates = []
+        
+        ok_count = 0
+        dup_count = 0
+
         for f in files:
             records = parse_docx_to_records(Path(f))  # ⚠️ 注意这里换成 parse_docx_to_records
             for rec, err, raw in records:
@@ -853,20 +887,54 @@ class MainWindow(QtWidgets.QMainWindow):
                     ok_count += 1
                 elif msg and "重复记录" in msg:
                     dup_count += 1
+                    duplicates.append((Path(f).name, msg, rec.get("raw_text", "")))
                 else:
                     errors.append((Path(f).name, msg or "未知错误", rec.get("raw_text", "")))
 
         msg_parts = [f"成功导入：{ok_count} 条"]
-        if dup_count:
+        if duplicates:
             msg_parts.append(f"重复跳过：{dup_count} 条")
+
+            # files[0] 是你选的第一个文件路径，.stem 可以自动拿到文件名 "2023会议"
+            first_fname = Path(files[0]).stem
+
+            if len(files) > 1:
+                csv_name = f"{first_fname}等_重复导入记录.csv"
+            else:
+                csv_name = f"{first_fname}_重复导入记录.csv"
+                
+            dup_csv = Path.cwd() / csv_name
+
+            with open(dup_csv, "w", newline="", encoding="utf-8-sig") as fp:
+                w = csv.writer(fp)
+                w.writerow(["文件名", "提示信息", "原始文本"])
+                w.writerows(duplicates)
+                
+            msg_parts.append(f"重复记录已保存至：\n{csv_name}") 
         if errors:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            err_csv = Path.cwd() / f"import_errors_{ts}.csv"
+            # ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # err_csv = Path.cwd() / f"import_errors_{ts}.csv"
+            # with open(err_csv, "w", newline="", encoding="utf-8-sig") as fp:
+            #     w = csv.writer(fp)
+            #     w.writerow(["文件名", "错误原因", "原始文本"])
+            #     w.writerows(errors)
+            # msg_parts.append(f"错误明细已保存：{err_csv}")
+            # 同样提取文件名逻辑 (保持风格一致)
+            first_fname = Path(files[0]).stem
+            if len(files) > 1:
+                err_csv_name = f"{first_fname}等_导入错误.csv"
+            else:
+                err_csv_name = f"{first_fname}_导入错误.csv"
+
+            err_csv = Path.cwd() / err_csv_name
+            
             with open(err_csv, "w", newline="", encoding="utf-8-sig") as fp:
                 w = csv.writer(fp)
                 w.writerow(["文件名", "错误原因", "原始文本"])
                 w.writerows(errors)
-            msg_parts.append(f"错误明细已保存：{err_csv}")
+            
+            # 提示信息也改得更友好一点
+            msg_parts.append(f"错误明细已保存至：\n{err_csv_name}")
 
         QtWidgets.QMessageBox.information(self, "导入完成", "\n".join(msg_parts))
         self.refresh_results()
