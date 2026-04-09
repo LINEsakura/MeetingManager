@@ -486,27 +486,46 @@ def split_docx_by_page(path: Path) -> List[List[str]]:
     读取 Word 文档，并按照手动分页符 (Ctrl+Enter) 分割成多个会议。
     每个会议是一组文本行 (list[str])。
     """
-    from docx.oxml.ns import qn
-
     doc = DocxDocument(str(path))
     meetings, current_lines = [], []
 
     for para in doc.paragraphs:
         text = para.text.strip()
-        has_page_break = False
 
-        for run in para.runs:
-            for br in run._element.findall(".//w:br", namespaces=run._element.nsmap):
-                if br.get(qn("w:type")) == "page":
-                    has_page_break = True
+        # 按段落内元素顺序，判断分页符和文字的先后关系
+        text_before_break = []
+        text_after_break = []
+        found_break = False
 
-        if text:
-            current_lines.append(text)
+        for child in para._element:
+            tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+            if tag == "r":  # run
+                for br in child.findall(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}br"):
+                    if br.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type") == "page":
+                        found_break = True
+                if not found_break:
+                    t = "".join(t.text or "" for t in child.findall("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"))
+                    if t:
+                        text_before_break.append(t)
+                else:
+                    t = "".join(t.text or "" for t in child.findall("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"))
+                    if t:
+                        text_after_break.append(t)
 
-        if has_page_break:  # 遇到分页符 → 结束当前会议
+        before = "".join(text_before_break).strip()
+        after = "".join(text_after_break).strip()
+
+        if found_break:
+            if before:
+                current_lines.append(before)
             if current_lines:
                 meetings.append(current_lines)
-                current_lines = []
+            current_lines = []
+            if after:
+                current_lines.append(after)
+        else:
+            if text:
+                current_lines.append(text)
 
     if current_lines:
         meetings.append(current_lines)
@@ -990,7 +1009,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 para.paragraph_format.first_line_indent = Cm(1)  # 首行缩进两个字
             if align is not None:
                 para.alignment = align
-            run = set_run_style(para.add_run(text), bold=bold)
+            set_run_style(para.add_run(text), bold=bold)
             return para
 
         for idx, rec in enumerate(self.last_results):
